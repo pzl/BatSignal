@@ -1,0 +1,106 @@
+#!/usr/bin/env python
+
+import requests
+from configparser import ConfigParser
+from itertools import chain
+from subprocess import run, PIPE
+import logging
+
+class BatSignal(object):
+	"""docstring for BatSignal"""
+	DOMAIN_V4="https://api.linode.com/v4/"
+
+	_domainID = None
+	_ip = None
+
+	def __init__(self):
+		super(BatSignal, self).__init__()
+		self.parseConfig()
+
+	def parseConfig(self):
+		cfg = ConfigParser()
+		with open("batsignal.conf") as lines:
+			lines = chain(("[top]",), lines) # allow conf to be sectionless
+			cfg.read_file(lines)
+		for key in cfg['top']:
+			setattr(self, key, cfg['top'][key])
+
+	def req(self, endpoint, method='GET', data=None, **kwargs):
+		auth = {"Authorization": f"Bearer {self.token}"}
+		method = method.lower()
+		fn = getattr(requests, method)
+
+		logging.debug(f">> {method}: {endpoint}")
+
+		if method == 'post' or method == 'put':
+			r = fn(self.DOMAIN_V4 + endpoint, json=data, headers=auth)
+		elif method == 'get' or method == 'delete':
+			r = fn(self.DOMAIN_V4 + endpoint, headers=auth)
+		else:
+			raise NameError
+		logging.debug(f"<< {r.json()}")
+		return r.json()
+
+
+	@property
+	def domainID(self):
+		if self._domainID == None:
+			domains = self.req("domains")['data']
+			self._domainID = [d['id'] for d in domains if d['domain'] == self.domain][0]
+		return self._domainID
+
+	@property
+	def ip(self):
+		if self._ip == None:
+			self._ip = self.resolveIP()
+		return self._ip
+	
+
+	def resolveIP(self):
+		cmd = run("dig +short myip.opendns.com @resolver1.opendns.com".split(' '),stdout=PIPE)
+		return cmd.stdout.decode('utf8').strip()
+
+	def getSubdomains(self):
+		return self.req(f"domains/{self.domainID}/records")['data']
+
+	def subdomainExists(self):
+		subdomains = [x['id'] for x in self.getSubdomains() if (x['type'] == 'A' or x['type'] == 'AAAA') and x['name'] == self.subdomain]
+		if subdomains:
+			return subdomains[0]
+		else:
+			return False
+
+	def createSubdomain(self):
+		created = self.req(f"domains/{self.domainID}/records", 'POST', {"type": "A", "target": self.ip, "name": self.subdomain})
+		return created['id']
+
+	def updateSubdomain(self, subdomainID):
+		return self.req(f"domains/{self.domainID}/records/{subdomainID}",'PUT',{"target":self.ip,"name":self.subdomain})
+
+	def deleteSubdomain(self, subdomainID):
+		return self.req(f"domains/{self.domainID}/records/{subdomainID}",'DELETE')
+
+
+	def turnOn(self):
+		record = self.subdomainExists()
+		if record:
+			return self.updateSubdomain(record)
+		else:
+			return self.createSubdomain()
+
+	def turnOff(self):
+		record = self.subdomainExists()
+		if record:
+			return self.deleteSubdomain(record)
+		else:
+			return True
+
+def main():
+	BS = BatSignal()
+	result = BS.turnOn()
+	logging.info(result)
+
+
+
+if __name__ == "__main__":
+	main()

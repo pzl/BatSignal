@@ -1,0 +1,7 @@
+*.sw[op]
+*.py[oc]
+batsignal.conf
+
+venv
+env
+__pycache__
