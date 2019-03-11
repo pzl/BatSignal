@@ -1,7 +1,5 @@
 *.sw[op]
-*.py[oc]
+batsignal
 batsignal.conf
 
-venv
-env
-__pycache__
+vendor
